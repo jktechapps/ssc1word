@@ -101,7 +101,7 @@ def show_payment_page(reason="not_found", expiry_date=None):
         st.link_button("Fill Registration Form", FORM_LINK, use_container_width=True)
         st.markdown("---")
         st.markdown("**Questions?**")
-        st.markdown("jktechservices@gmail.com")
+        st.markdown("jktechapps@gmail.com")
     st.markdown("---")
     if st.button("Back to Login", use_container_width=True):
         st.session_state.pop("show_payment", None)
