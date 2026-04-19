@@ -5,6 +5,20 @@ from libsql_client import create_client_sync
 
 st.set_page_config(page_title="SSC CGL OWS Master", page_icon="📚", layout="centered")
 
+# 30 fixed demo question IDs — same for every demo user, always
+# Spread evenly across all 1173 questions so no topic is over-represented
+DEMO_IDS = (1,40,79,118,157,196,235,274,313,352,391,430,469,508,547,
+            586,625,664,703,742,781,820,859,898,937,976,1015,1054,1093,1132)
+
+UPI_ID    = "your-upi-id@bank"        # ← update this
+FORM_LINK = "https://forms.gle/xxxx"  # ← update this
+
+DIFFICULTY_BADGE = {
+    "easy":   "🟢 Easy",
+    "medium": "🟡 Medium",
+    "hard":   "🔴 Hard",
+}
+
 
 # ── DB ────────────────────────────────────────────────────────────────────────
 
@@ -16,12 +30,6 @@ def get_client():
 
 
 def check_user(email: str):
-    """
-    Returns dict with status:
-      'ok'      → valid paid user, access granted
-      'expired' → was a user, subscription ended
-      'not_found' → email not in DB
-    """
     try:
         client = get_client()
         res = client.execute(
@@ -41,50 +49,58 @@ def check_user(email: str):
         return {"status": "not_found"}
 
 
-def get_random_question():
+def get_question(paid: bool):
+    """
+    Paid users  → fully random from all 1173 questions
+    Demo users  → random from the fixed 30 DEMO_IDS only
+    """
     try:
         client = get_client()
-        res = client.execute(
-            "SELECT meaning, options, answer, hindi, difficulty "
-            "FROM ows_master ORDER BY RANDOM() LIMIT 1"
-        )
+        if paid:
+            res = client.execute(
+                "SELECT id, meaning, options, answer, hindi, difficulty "
+                "FROM ows_master ORDER BY RANDOM() LIMIT 1"
+            )
+        else:
+            # Pick one random ID from the fixed demo set each time
+            import random
+            demo_id = random.choice(DEMO_IDS)
+            res = client.execute(
+                "SELECT id, meaning, options, answer, hindi, difficulty "
+                "FROM ows_master WHERE id = ?",
+                (demo_id,)
+            )
         client.close()
         if res.rows:
             row = res.rows[0]
             try:
-                opts = json.loads(row[1])
+                opts = json.loads(row[2])
             except Exception:
-                opts = row[1].split(", ")
+                opts = row[2].split(", ")
             return {
-                "q":          row[0],
+                "id":         row[0],
+                "q":          row[1],
                 "opts":       opts,
-                "a":          row[2],
-                "hindi":      row[3],
-                "difficulty": row[4],
+                "a":          row[3],
+                "hindi":      row[4],
+                "difficulty": row[5],
             }
     except Exception as e:
         st.error(f"DB error: {e}")
     return None
 
 
-# ── Admin helpers ─────────────────────────────────────────────────────────────
-
 def add_user(email, paid_on_str):
-    """Adds user with 15-month expiry from paid_on date."""
-    from datetime import timedelta
     paid_on = datetime.strptime(paid_on_str, "%Y-%m-%d").date()
-    # 15 months = ~456 days (no monthsadd in stdlib, so we do it properly)
     month = paid_on.month - 1 + 15
     year  = paid_on.year + month // 12
     month = month % 12 + 1
     try:
         expiry = paid_on.replace(year=year, month=month)
     except ValueError:
-        # handles edge case like Jan 31 + 15 months
         import calendar
         last_day = calendar.monthrange(year, month)[1]
         expiry = paid_on.replace(year=year, month=month, day=last_day)
-
     client = get_client()
     client.execute(
         "INSERT OR REPLACE INTO paid_users (email, paid_on, expiry) VALUES (?, ?, ?)",
@@ -94,74 +110,87 @@ def add_user(email, paid_on_str):
     return expiry.strftime("%Y-%m-%d")
 
 
-# ── UI constants ──────────────────────────────────────────────────────────────
-
-DIFFICULTY_BADGE = {
-    "easy":   "🟢 Easy",
-    "medium": "🟡 Medium",
-    "hard":   "🔴 Hard",
-}
-
-UPI_ID    = "your-upi-id@bank"        # ← update this
-FORM_LINK = "https://forms.gle/xxxx"  # ← update this
-
-
 # ── Screens ───────────────────────────────────────────────────────────────────
 
 def show_login():
     st.title("SSC CGL OWS Master 📚")
-    st.markdown("Practice 1,173 One Word Substitution questions for SSC CGL Tier 1.")
+    st.markdown("Master **One Word Substitution** for SSC CGL Tier 1 — 1,173 questions with Hindi meanings.")
     st.markdown("---")
 
-    st.markdown("### 🔐 Enter your registered email")
-    email = st.text_input("Email address", placeholder="yourname@gmail.com")
+    tab1, tab2 = st.tabs(["🔐 Paid Access", "🆓 Try Free Demo"])
 
-    if st.button("▶️ Start Practice", use_container_width=True):
-        if not email.strip():
-            st.warning("Please enter your email.")
-            return
+    with tab1:
+        st.markdown("#### Enter your registered email")
+        email = st.text_input("Email", placeholder="yourname@gmail.com", key="paid_email")
+        if st.button("▶️ Start Practice", use_container_width=True, key="paid_btn"):
+            if not email.strip():
+                st.warning("Please enter your email.")
+            else:
+                result = check_user(email)
+                if result["status"] == "ok":
+                    st.session_state.user = result
+                    st.session_state.is_demo = False
+                    st.rerun()
+                elif result["status"] == "expired":
+                    st.error(f"⏰ Your access expired on **{result['expiry']}**.")
+                    st.info(f"Pay ₹99 to UPI `{UPI_ID}` and [fill this form]({FORM_LINK}) to renew.")
+                else:
+                    st.error("❌ Email not registered.")
+                    st.markdown(
+                        f"**Get full access — ₹99 · 15 months · 1,173 questions**\n\n"
+                        f"1. Pay ₹99 to UPI: `{UPI_ID}`\n"
+                        f"2. [Fill this form]({FORM_LINK}) with email + payment screenshot\n"
+                        f"3. Access activated within a few hours"
+                    )
 
-        result = check_user(email)
-
-        if result["status"] == "ok":
-            st.session_state.user = result
+    with tab2:
+        st.markdown("#### Try 30 sample questions — no payment needed")
+        st.caption("⚠️ Demo shows the same 30 questions to everyone. Pay ₹99 to unlock all 1,173.")
+        if st.button("▶️ Start Free Demo", use_container_width=True, key="demo_btn"):
+            st.session_state.user = {"email": "demo", "expiry": None}
+            st.session_state.is_demo = True
+            st.session_state.demo_count = 0
             st.rerun()
-
-        elif result["status"] == "expired":
-            st.error(f"⏰ Your access expired on **{result['expiry']}**.")
-            st.info("Pay ₹99 again to renew for another 15 months.")
-            st.markdown(f"UPI: `{UPI_ID}`  |  [Fill renewal form]({FORM_LINK})")
-
-        else:
-            st.error("❌ Email not registered. Please complete payment first.")
-            st.markdown(
-                f"**How to get access (₹99 · 15 months):**\n\n"
-                f"1. Pay ₹99 to UPI: `{UPI_ID}`\n"
-                f"2. [Fill this form]({FORM_LINK}) with your email + payment screenshot\n"
-                f"3. Access activated within a few hours"
-            )
 
 
 def show_quiz():
-    user = st.session_state.user
+    is_demo = st.session_state.get("is_demo", False)
+    user    = st.session_state.user
 
     st.title("SSC CGL OWS Master 📚")
 
-    # Show expiry as a soft reminder
-    expiry = datetime.strptime(user["expiry"], "%Y-%m-%d").date()
-    days_left = (expiry - date.today()).days
-    if days_left <= 30:
-        st.warning(f"⚠️ Your access expires in **{days_left} days** ({user['expiry']}). Renew early to avoid interruption.")
+    if is_demo:
+        done = st.session_state.get("demo_count", 0)
+        remaining = len(DEMO_IDS) - done
+        st.info(f"🆓 Demo mode — **{remaining} questions left** out of {len(DEMO_IDS)}. "
+                f"[Pay ₹99 to unlock all 1,173]({FORM_LINK})")
     else:
-        st.caption(f"Access valid until **{user['expiry']}** · {days_left} days left")
+        expiry = datetime.strptime(user["expiry"], "%Y-%m-%d").date()
+        days_left = (expiry - date.today()).days
+        if days_left <= 30:
+            st.warning(f"⚠️ Access expires in **{days_left} days**. Renew to avoid interruption.")
+        else:
+            st.caption(f"✅ Full access · {days_left} days remaining")
 
-    if st.sidebar.button("🚪 Logout"):
+    if st.sidebar.button("🚪 Exit" if is_demo else "🚪 Logout"):
         st.session_state.clear()
         st.rerun()
 
     # Load question
     if "current_q" not in st.session_state:
-        q_data = get_random_question()
+        # Demo exhausted?
+        if is_demo and st.session_state.get("demo_count", 0) >= len(DEMO_IDS):
+            st.success("🎉 You've completed the demo!")
+            st.markdown(
+                f"**Enjoyed it? Get all 1,173 questions for just ₹99 (15 months access)**\n\n"
+                f"Pay to UPI: `{UPI_ID}` and [fill this form]({FORM_LINK})"
+            )
+            if st.button("🔁 Restart Demo"):
+                st.session_state.demo_count = 0
+                st.rerun()
+            return
+
+        q_data = get_question(paid=not is_demo)
         if q_data is None:
             st.error("Could not load a question. Try refreshing.")
             return
@@ -208,7 +237,14 @@ def show_quiz():
         if q.get("hindi"):
             st.info(f"🇮🇳 Hindi: {q['hindi']}")
 
-        if st.button("Next Question ➡️", use_container_width=True):
+        # Upsell nudge after every 10th demo question
+        if is_demo and st.session_state.get("demo_count", 0) % 10 == 9:
+            st.warning(f"💡 Like this? Get all 1,173 questions for ₹99 → UPI: `{UPI_ID}`")
+
+        next_label = "Next Question ➡️"
+        if st.button(next_label, use_container_width=True):
+            if is_demo:
+                st.session_state.demo_count = st.session_state.get("demo_count", 0) + 1
             for key in ["current_q", "answered", "selected"]:
                 st.session_state.pop(key, None)
             st.rerun()
@@ -216,8 +252,8 @@ def show_quiz():
 
 def show_admin():
     st.title("🛠️ Admin Panel")
-
     st.markdown("#### ➕ Register a new paid user")
+
     email   = st.text_input("Email")
     paid_on = st.text_input("Payment date (YYYY-MM-DD)", value=date.today().strftime("%Y-%m-%d"))
 
@@ -233,7 +269,6 @@ def show_admin():
 
     st.markdown("---")
     st.markdown("#### 👥 All users")
-
     try:
         client = get_client()
         res = client.execute(
@@ -243,10 +278,10 @@ def show_admin():
         if res.rows:
             for row in res.rows:
                 expiry = datetime.strptime(row[2], "%Y-%m-%d").date()
-                status = "✅ Active" if date.today() <= expiry else "❌ Expired"
+                status = "✅" if date.today() <= expiry else "❌ Expired"
                 st.write(f"{status} · **{row[0]}** · paid {row[1]} · expires {row[2]}")
         else:
-            st.info("No users yet.")
+            st.info("No paid users yet.")
     except Exception as e:
         st.error(f"Error: {e}")
 
@@ -274,3 +309,4 @@ elif "user" in st.session_state:
 
 else:
     show_login()
+
