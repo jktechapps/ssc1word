@@ -10,8 +10,8 @@ st.set_page_config(page_title="SSC CGL OWS Master", page_icon="📚", layout="ce
 DEMO_IDS = (1,40,79,118,157,196,235,274,313,352,391,430,469,508,547,
             586,625,664,703,742,781,820,859,898,937,976,1015,1054,1093,1132)
 
-UPI_ID    = "your-upi-id@bank"        # ← update this
-FORM_LINK = "https://forms.gle/xxxx"  # ← update this
+UPI_ID    = "jktechservices@ybl"        # ← update this
+FORM_LINK = "https://forms.gle/muwFr8EbTJNytBVw9"  # ← update this
 
 DIFFICULTY_BADGE = {
     "easy":   "🟢 Easy",
